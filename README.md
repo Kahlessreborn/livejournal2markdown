@@ -1,4 +1,7 @@
 # LiveJournal 2 Markdown Archive Tool
+<p align="center">
+  <img src="https://github.com/Jamisonfitz/livejournal2markdown/blob/main/assets/logo.png" alt="Livejournal 2 Markdown">
+</p>
 
 This script is a utility to download, archive, and convert LiveJournal posts into markdown (`.md`) files. It provides an automated solution to backup LiveJournal blogs, preserving each post's content, title, and publishing date for posts that are public.
 
