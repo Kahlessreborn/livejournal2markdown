@@ -101,9 +101,6 @@ This project is licensed under the MIT License.
 - The HTML-to-Markdown conversion has been upgraded to preserve common LiveJournal content structures such as headings, lists, links, images, code blocks, blockquotes, and tables.
 - If `markdownify` is installed, the script will use it for better conversion fidelity; otherwise it falls back to an enhanced built-in converter.
 
-## Test mode
-- A `USE_TESTDOMAIN` file is included in the repository root to force local tests to use `testdomain.livejournal.com` and avoid contacting real LiveJournal sites.
-
 ## Branch workflow
 For this repository, use the `experimental` branch for testing and development. When changes are approved, merge `experimental` into `main` and publish from `main`.
 
