@@ -8,6 +8,8 @@ import subprocess
 import importlib
 import importlib.util
 import datetime
+import hashlib
+import urllib.parse
 
 BOOTSTRAP_DEPENDENCIES = {
     'requests': ('requests[socks]', ['requests', 'PySocks']),
@@ -55,10 +57,16 @@ if sys.platform == 'win32':
 
 # Configuration
 OUTPUT_DIR = "./Scraped Journals"
+IMAGE_CACHE_DIR = os.path.join(OUTPUT_DIR, 'assets', 'images')
 BASE_URL_TEMPLATE = "https://{}.livejournal.com/"
+TEST_DOMAIN = 'testdomain.livejournal.com'
+# If the file `USE_TESTDOMAIN` exists in the repository root, or the env var USE_TESTDOMAIN is set,
+# or the script is launched with `--test`, force all network requests to the test domain.
+USE_TEST_DOMAIN = os.path.exists('USE_TESTDOMAIN') or os.environ.get('USE_TESTDOMAIN', '').lower() in ('1', 'true') or ('--test' in sys.argv)
 SKIP_PARAM = "?skip="
 REQUEST_DELAY_RANGE = (1.5, 4.5)
 TOR_PROXY = {'http': 'socks5h://127.0.0.1:9050', 'https': 'socks5h://127.0.0.1:9050'}
+IMAGE_CACHE = {}
 
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
@@ -79,6 +87,7 @@ DEFAULT_HEADERS = {
 
 # Ensure the output directory exists
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(IMAGE_CACHE_DIR, exist_ok=True)
 
 def get_random_headers(referer=None):
     headers = DEFAULT_HEADERS.copy()
@@ -86,6 +95,89 @@ def get_random_headers(referer=None):
     if referer:
         headers['Referer'] = referer
     return headers
+
+
+def make_replica_url(href, base_url=None):
+    if not href or href.startswith('#') or href.lower().startswith(('mailto:', 'javascript:', 'tel:')):
+        return href
+
+    resolved = urllib.parse.urljoin(base_url or '', href)
+    parsed = urllib.parse.urlparse(resolved)
+    if 'livejournal.com' not in parsed.netloc:
+        return href
+
+    new_netloc = parsed.netloc.replace('livejournal.com', 'livejournal.invalid')
+    replica = parsed._replace(netloc=new_netloc)
+    return urllib.parse.urlunparse(replica)
+
+
+def get_local_image_path(img_url, session, base_url=None):
+    if not img_url or img_url.startswith('data:'):
+        return img_url
+
+    resolved = urllib.parse.urljoin(base_url or '', img_url)
+    if resolved.startswith('//'):
+        resolved = 'https:' + resolved
+
+    parsed = urllib.parse.urlparse(resolved)
+    if parsed.scheme not in ('http', 'https'):
+        return img_url
+
+    if resolved in IMAGE_CACHE:
+        return IMAGE_CACHE[resolved]
+
+    filename_base = os.path.basename(parsed.path) or 'image'
+    ext = os.path.splitext(filename_base)[1] or '.img'
+    safe_name = re.sub(r'[^A-Za-z0-9._-]', '_', filename_base)
+    if len(safe_name) > 60:
+        safe_name = safe_name[:60]
+    digest = hashlib.sha256(resolved.encode('utf-8')).hexdigest()[:16]
+    local_filename = f"{digest}_{safe_name}"
+    local_path = os.path.join(IMAGE_CACHE_DIR, local_filename)
+
+    if os.path.exists(local_path):
+        relative_path = os.path.relpath(local_path, OUTPUT_DIR).replace('\\', '/')
+        IMAGE_CACHE[resolved] = relative_path
+        return relative_path
+
+    try:
+        resp = session.get(resolved, headers=get_random_headers(referer=base_url), stream=True, timeout=20)
+        if resp.status_code != 200:
+            print(f"[!] Failed to download image: {resolved} (status {resp.status_code})")
+            return img_url
+
+        with open(local_path, 'wb') as image_file:
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk:
+                    image_file.write(chunk)
+    except Exception as e:
+        print(f"[!] Image download error for {resolved}: {e}")
+        return img_url
+
+    relative_path = os.path.relpath(local_path, OUTPUT_DIR).replace('\\', '/')
+    IMAGE_CACHE[resolved] = relative_path
+    return relative_path
+
+
+def preprocess_post_html(html_content, session, base_url=None):
+    soup = BeautifulSoup(html_content, 'html.parser')
+
+    for img_tag in soup.find_all('img'):
+        src = img_tag.get('src')
+        if src:
+            img_tag['src'] = get_local_image_path(src, session, base_url)
+
+        srcset = img_tag.get('srcset')
+        if srcset:
+            candidates = [part.strip().split(' ')[0] for part in srcset.split(',') if part.strip()]
+            if candidates:
+                img_tag['src'] = get_local_image_path(candidates[0], session, base_url)
+            del img_tag['srcset']
+
+    for a_tag in soup.find_all('a', href=True):
+        a_tag['href'] = make_replica_url(a_tag['href'], base_url)
+
+    return str(soup)
 
 
 def detect_os():
@@ -158,6 +250,125 @@ def start_tor_daemon():
     return proc
 
 
+def detect_tor_browser():
+    """Return path to Tor Browser's Firefox binary if installed, else None."""
+    candidates = []
+    if sys.platform == 'win32':
+        candidates.extend([
+            r"C:\Program Files\Tor Browser\Browser\firefox.exe",
+            r"C:\Program Files (x86)\Tor Browser\Browser\firefox.exe",
+        ])
+    elif sys.platform.startswith('linux'):
+        home = os.path.expanduser('~')
+        candidates.extend([
+            os.path.join(home, 'tor-browser_en-US', 'Browser', 'firefox'),
+            os.path.join(home, 'tor-browser', 'Browser', 'firefox'),
+            '/opt/tor-browser/Browser/firefox',
+        ])
+    elif sys.platform == 'darwin':
+        candidates.append('/Applications/Tor Browser.app/Contents/MacOS/firefox')
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def start_selenium_firefox(use_tor=False, use_tor_browser=False, tor_socks_port=9150, headless=True):
+    """Start a Selenium Firefox webdriver configured to use Tor's SOCKS proxy or Tor Browser binary.
+
+    Returns a `selenium.webdriver.Firefox` instance. This function lazily imports selenium and webdriver-manager.
+    """
+    try:
+        from selenium import webdriver
+        from selenium.webdriver.firefox.options import Options
+        from selenium.webdriver.firefox.service import Service
+        from selenium.webdriver.common.proxy import Proxy, ProxyType
+        from webdriver_manager.firefox import GeckoDriverManager
+    except Exception as e:
+        raise RuntimeError('Selenium or webdriver-manager not available: ' + str(e))
+
+    options = Options()
+    # If attaching to Tor Browser binary, avoid headless (Tor Browser resists headless flags)
+    if use_tor_browser:
+        headless = False
+    options.headless = headless
+
+    # If using Tor Browser binary, try to locate it
+    if use_tor_browser:
+        tb_path = detect_tor_browser()
+        if tb_path:
+            options.binary_location = tb_path
+        else:
+            raise FileNotFoundError('Tor Browser binary not found on this system')
+
+    # Configure Firefox to use SOCKS proxy if requested
+    if use_tor:
+        proxy = Proxy()
+        proxy.proxy_type = ProxyType.MANUAL
+        proxy.socks_proxy = f'127.0.0.1:{tor_socks_port}'
+        proxy.socks_version = 5
+        proxy.add_to_capabilities(webdriver.DesiredCapabilities.FIREFOX)
+
+    service = Service(GeckoDriverManager().install())
+    if use_tor:
+        driver = webdriver.Firefox(service=service, options=options)
+        # also set network proxy prefs for Firefox profile
+        try:
+            driver.install_addon = getattr(driver, 'install_addon', None)
+        except Exception:
+            pass
+    else:
+        driver = webdriver.Firefox(service=service, options=options)
+
+    return driver
+
+
+def navigate_to_pyodide(url, driver, python_code, timeout=30):
+    """Navigate to a Pyodide/JupyterLite page and run `python_code` inside the WASM Python runtime.
+
+    Returns the result (or an error dict) from the Pyodide execution.
+    """
+    driver.get(url)
+
+    # Wait for window.pyodide to be available
+    end_time = time.time() + timeout
+    while time.time() < end_time:
+        try:
+            has_pyodide = driver.execute_script('return typeof window.pyodide !== "undefined";')
+            if has_pyodide:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+
+    # If Pyodide not loaded, try to trigger loadPyodide if present
+    try:
+        loaded = driver.execute_script('return typeof window.pyodide !== "undefined";')
+    except Exception:
+        loaded = False
+
+    if not loaded:
+        raise RuntimeError('Pyodide was not detected on the page within timeout')
+
+    # Execute the python code using the async Pyodide API
+    # Use execute_async_script: the last argument is a callback to signal completion
+    safe_code = python_code.replace('\\', '\\\\').replace('\n', '\\n').replace("'", "\\'")
+    script = f"""
+    const callback = arguments[arguments.length-1];
+    (async () => {{
+        try {{
+            const result = await window.pyodide.runPythonAsync('{safe_code}');
+            callback({{ok: true, result: result}});
+        }} catch (e) {{
+            callback({{ok: false, error: String(e)}});
+        }}
+    }})();
+    """
+    res = driver.execute_async_script(script)
+    return res
+
+
 def get_session(use_tor=False):
     """Return a requests session configured for standard or Tor traffic."""
     SET_READABILITY_URL = "https://www.livejournal.com/tools/setstylemine.bml"
@@ -187,7 +398,10 @@ def pause_between_requests():
 
 def get_all_permalinks(subdomain, session):
     """Fetch all post permalinks from a LiveJournal blog."""
-    base_url = BASE_URL_TEMPLATE.format(subdomain)
+    if USE_TEST_DOMAIN:
+        base_url = f"https://{TEST_DOMAIN}/"
+    else:
+        base_url = BASE_URL_TEMPLATE.format(subdomain)
     skip = 0
     all_permalinks = set()
 
@@ -214,36 +428,121 @@ def get_all_permalinks(subdomain, session):
     return all_permalinks
 
 def convert_html_to_markdown(html_content):
-    """Converts HTML to Markdown."""
+    """Converts HTML to Markdown with better visual fidelity."""
+    try:
+        import markdownify
+        return markdownify.markdownify(
+            html_content,
+            heading_style='ATX',
+            bullets='-',
+            strip=['style', 'script'],
+            convert=['img', 'table', 'pre', 'code', 'a', 'blockquote']
+        ).strip()
+    except Exception:
+        pass
+
     soup = BeautifulSoup(html_content, 'html.parser')
+
+    for tag in soup.find_all('pre'):
+        code_text = tag.get_text()
+        fenced = f"\n```\n{code_text.rstrip()}\n```\n"
+        tag.replace_with(fenced)
+
+    for tag in soup.find_all('code'):
+        if tag.parent.name != 'pre':
+            tag.replace_with(f"`{tag.get_text()}`")
+
+    for img_tag in soup.find_all('img'):
+        alt = img_tag.get('alt', '').strip() or 'image'
+        src = img_tag.get('src', '').strip()
+        img_tag.replace_with(f"![{alt}]({src})")
+
     for tag in soup.find_all(['strong', 'b']):
         tag.replace_with(f"**{tag.get_text()}**")
     for tag in soup.find_all(['em', 'i']):
         tag.replace_with(f"*{tag.get_text()}*")
     for tag in soup.find_all('a', href=True):
         tag.replace_with(f"[{tag.get_text()}]({tag['href']})")
+
     for tag in soup.find_all('blockquote'):
-        tag.replace_with(f"> {tag.get_text()}")
+        lines = tag.get_text().splitlines()
+        quoted = '\n'.join(f"> {line}" for line in lines if line.strip())
+        tag.replace_with(f"\n{quoted}\n")
+
     for tag in soup.find_all('br'):
         tag.replace_with("\n")
-    for ul_tag in soup.find_all('ul'):
+
+    def convert_list(tag, marker):
         items = []
-        for li_tag in ul_tag.find_all('li', recursive=False):
-            items.append(f"- {li_tag.get_text()}")
-            li_tag.extract()
-        ul_tag.insert_before('\n'.join(items))
-        ul_tag.unwrap()
+        for li in tag.find_all('li', recursive=False):
+            text = li.get_text(separator=' ', strip=True)
+            items.append(f"{marker} {text}")
+        tag.insert_before('\n'.join(items) + '\n')
+        tag.decompose()
+
+    for ul_tag in soup.find_all('ul'):
+        convert_list(ul_tag, '-')
     for ol_tag in soup.find_all('ol'):
         items = []
-        for index, li_tag in enumerate(ol_tag.find_all('li', recursive=False), 1):
-            items.append(f"{index}. {li_tag.get_text()}")
-            li_tag.extract()
-        ol_tag.insert_before('\n'.join(items))
-        ol_tag.unwrap()
+        for index, li in enumerate(ol_tag.find_all('li', recursive=False), 1):
+            text = li.get_text(separator=' ', strip=True)
+            items.append(f"{index}. {text}")
+        ol_tag.insert_before('\n'.join(items) + '\n')
+        ol_tag.decompose()
+
+    for table in soup.find_all('table'):
+        rows = []
+        for row in table.find_all('tr'):
+            cells = [cell.get_text(separator=' ', strip=True) for cell in row.find_all(['th', 'td'])]
+            rows.append(f"| {' | '.join(cells)} |")
+        if len(rows) > 1:
+            header_count = len(rows[0].split('|')) - 2
+            header_sep = '| ' + ' | '.join(['---'] * header_count) + ' |'
+            rows.insert(1, header_sep)
+        table.insert_before('\n'.join(rows) + '\n\n')
+        table.decompose()
+
     for h_tag in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
         level = int(h_tag.name[1])
         h_tag.replace_with(f"{'#' * level} {h_tag.get_text()}")
-    return soup.get_text()
+
+    text = soup.get_text()
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+def convert_html_to_html(html_content, title, date_time, original_url):
+    """Wrap post HTML content in a minimal page structure for HTML-like output."""
+    soup = BeautifulSoup(html_content, 'html.parser')
+    body_content = soup.decode_contents()
+    safe_title = BeautifulSoup('', 'html.parser')
+    safe_title.append(title)
+
+    html_page = f"""<!DOCTYPE html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8'>
+  <title>{safe_title.get_text()}</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 2rem; }}
+    article {{ max-width: 800px; margin: auto; }}
+    .post-meta {{ color: #555; margin-bottom: 1rem; }}
+    .original-link {{ margin-top: 2rem; font-size: 0.9rem; }}
+  </style>
+</head>
+<body>
+  <article>
+    <header>
+      <h1>{safe_title.get_text()}</h1>
+      <div class='post-meta'>{date_time}</div>
+    </header>
+    {body_content}
+    <footer class='original-link'>
+      <p>Original post: <a href='{original_url}'>{original_url}</a></p>
+    </footer>
+  </article>
+</body>
+</html>"""
+    return html_page
 
 def sanitize_title(title):
     """Cleans up the title to make it safe for use as a filename."""
@@ -295,8 +594,8 @@ def parse_date_time(date_text):
     raise ValueError(f"Unsupported date format: {date_text}")
 
 
-def extract_and_save_content(url, session):
-    """Extracts post details from a LiveJournal permalink and saves it as a markdown file."""
+def extract_and_save_content(url, session, output_mode='markdown'):
+    """Extracts post details from a LiveJournal permalink and saves it as a markdown or HTML file."""
     referer = BASE_URL_TEMPLATE.format(url.split('//')[1].split('.livejournal.com')[0])
     response = session.get(url, headers=get_random_headers(referer=referer))
     if response.status_code != 200:
@@ -331,11 +630,13 @@ def extract_and_save_content(url, session):
         print(f"Failed to extract date for {url}: {date_text}")
         return
 
-    post_content = convert_html_to_markdown(str(post_content_element))
-    if title_element:
-        title = title_element.get_text(strip=True)
+    title = title_element.get_text(strip=True) if title_element else ''
+    processed_html = preprocess_post_html(str(post_content_element), session, url)
+
+    if output_mode == 'html':
+        post_content = convert_html_to_html(processed_html, title, date_time, url)
     else:
-        title = ''
+        post_content = convert_html_to_markdown(processed_html)
 
     if not title and soup.title:
         title = soup.title.get_text(strip=True)
@@ -344,18 +645,25 @@ def extract_and_save_content(url, session):
         title = post_content[:15]
 
     sanitized_filename = sanitize_title(title)
-    filename = f"{date_time.split(' ')[0].replace('-', '_')}_{sanitized_filename}.md"
+    extension = 'html' if output_mode == 'html' else 'md'
+    filename = f"{date_time.split(' ')[0].replace('-', '_')}_{sanitized_filename}.{extension}"
     filepath = os.path.join(OUTPUT_DIR, filename)
     counter = 1
     while os.path.exists(filepath):
-        filepath = os.path.join(OUTPUT_DIR, f"{date_time.split(' ')[0].replace('-', '_')}_{sanitized_filename}_{counter}.md")
+        filepath = os.path.join(OUTPUT_DIR, f"{date_time.split(' ')[0].replace('-', '_')}_{sanitized_filename}_{counter}.{extension}")
         counter += 1
 
     with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(f"# {title}\n\n")
-        f.write(f"**{date_time}**\n\n")
-        f.write(post_content)
-        f.write(f"\n\n[Original Post]({url})")
+        if output_mode == 'html':
+            safe_original_url = make_replica_url(url)
+            f.write(post_content)
+            f.write(f"\n<footer class='original-link'>\n  <p>Original post: <a href='{safe_original_url}'>{safe_original_url}</a></p>\n</footer>\n")
+        else:
+            safe_original_url = make_replica_url(url)
+            f.write(f"# {title}\n\n")
+            f.write(f"**{date_time}**\n\n")
+            f.write(post_content)
+            f.write(f"\n\n[Original Post]({safe_original_url})")
 
     set_file_creation_time(filepath, date_time)
     print(f"Archiving {filename}...")
@@ -410,11 +718,38 @@ if __name__ == "__main__":
 
         subdomain = input("Please enter the LiveJournal subdomain/username (e.g., 'john-doe'): ")
         session = get_session(use_tor=use_tor)
+
+        # Optional: browser-rendered navigation for JS/WASM pages (Pyodide/JupyterLite)
+        browser_mode = input("Enable browser-rendered navigation for Pyodide/JupyterLite pages? (y/n): ").strip().lower()
+        if browser_mode == 'y':
+            try:
+                use_tb = input("If Tor is enabled, use the Tor Browser binary if available? (y/n): ").strip().lower() == 'y'
+                tb_driver = start_selenium_firefox(use_tor=use_tor, use_tor_browser=use_tb)
+                test_url = input("Enter WASM Python page URL to open (leave blank for demo): ").strip()
+                if not test_url:
+                    test_url = 'https://jupyterlite.github.io/demo/'
+                print(f"[*] Opening {test_url} and attempting to run code in Pyodide...")
+                sample_code = input("Enter Python code to run in the page (single-line recommended; leave blank for demo): ").strip()
+                if not sample_code:
+                    sample_code = "print('hello from pyodide')"
+                result = navigate_to_pyodide(test_url, tb_driver, sample_code)
+                print("[Pyodide result]", result)
+            except Exception as e:
+                print("[!] Browser-mode error:", e)
+            finally:
+                try:
+                    tb_driver.quit()
+                except Exception:
+                    pass
+        output_mode = input("Choose output style: markdown or html? (markdown/html) ").strip().lower()
+        if output_mode not in ('markdown', 'html'):
+            output_mode = 'markdown'
+
         links = get_all_permalinks(subdomain, session)
         links_without_comments = {link for link in links if "#comments" not in link}
         print(f"Found {len(links_without_comments)} posts, processing now...\n")
         for link in links_without_comments:
-            extract_and_save_content(link, session)
+            extract_and_save_content(link, session, output_mode=output_mode)
     except Exception as e:
         print(f"Error: {e}")
     finally:

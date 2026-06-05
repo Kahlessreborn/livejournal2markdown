@@ -81,6 +81,25 @@ This project is licensed under the MIT License.
 - If Tor is missing, the script can prompt to install it and optionally remove it after the session.
 - The script now supports SOCKS5 proxies via `requests[socks]`.
 
+## Browser-mode support
+- The script includes optional browser automation helpers for navigating WebAssembly-powered pages such as JupyterLite and Pyodide.
+- This helper code is present in `main.py`, but full Selenium-based execution requires `selenium` and a compatible browser driver such as Firefox/GeckoDriver.
+- In this environment, browser-mode has not been run end-to-end because Selenium and geckodriver are not installed.
+
+## Output style selection
+- The script now prompts whether to save each post as Markdown or as an HTML-like file.
+- HTML mode preserves the post body structure below the site header, closer to the original page appearance, and writes `.html` files.
+- The script downloads page images into a shared `assets/images/` folder so the same image URL is only saved once and reused across multiple archived posts.
+- Links that point to any `livejournal.com` domain are rewritten to `*.livejournal.invalid` replicas so they look similar but cannot resolve to a real website.
+- Markdown mode continues to produce readable archival Markdown files with headings and links.
+
+## Improved Markdown fidelity
+- The HTML-to-Markdown conversion has been upgraded to preserve common LiveJournal content structures such as headings, lists, links, images, code blocks, blockquotes, and tables.
+- If `markdownify` is installed, the script will use it for better conversion fidelity; otherwise it falls back to an enhanced built-in converter.
+
+## Test mode
+- A `USE_TESTDOMAIN` file is included in the repository root to force local tests to use `testdomain.livejournal.com` and avoid contacting real LiveJournal sites.
+
 ## Branch workflow
 For this repository, use the `experimental` branch for testing and development. When changes are approved, merge `experimental` into `main` and publish from `main`.
 
