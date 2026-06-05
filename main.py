@@ -7,7 +7,7 @@ import pywintypes
 import win32file
 
 # Configuration
-OUTPUT_DIR = "./MD"
+OUTPUT_DIR = "./Scraped Journals"
 BASE_URL_TEMPLATE = "https://{}.livejournal.com/"
 SKIP_PARAM = "?skip="
 
@@ -106,29 +106,79 @@ def set_file_creation_time(filename, date_time_str):
     win32file.SetFileTime(handle, win_time, win_time, win_time)
     handle.Close()
 
+
+def parse_date_time(date_text):
+    """Normalize a LiveJournal date string into YYYY-MM-DD HH:MM:SS."""
+    date_text = date_text.strip()
+    if not date_text:
+        raise ValueError("Empty date text")
+
+    formats = [
+        '%Y-%m-%d %H:%M:%S',
+        '%Y-%m-%d %H:%M',
+        '%B %d %Y, %H:%M',
+        '%B %d, %Y, %H:%M',
+    ]
+    for fmt in formats:
+        try:
+            parsed = datetime.datetime.strptime(date_text, fmt)
+            return parsed.strftime('%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            continue
+
+    # Try a simple manual cleanup for ordinal days like "March 1st 2020, 12:00"
+    cleaned = re.sub(r'(?P<day>\d+)(st|nd|rd|th)', r'\g<day>', date_text)
+    for fmt in formats:
+        try:
+            parsed = datetime.datetime.strptime(cleaned, fmt)
+            return parsed.strftime('%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            continue
+
+    raise ValueError(f"Unsupported date format: {date_text}")
+
+
 def extract_and_save_content(url, session):
     """Extracts post details from a LiveJournal permalink and saves it as a markdown file."""
     response = session.get(url, headers=HEADERS)
     if response.status_code != 200:
         print("Failed to fetch the page:", url)
         return
+
     soup = BeautifulSoup(response.content, 'html.parser')
     date_content = soup.find('time', class_='b-singlepost-author-date')
+    if not date_content:
+        date_content = soup.find('time')
+
     title_element = soup.find('h1', class_='b-singlepost-title')
+    if not title_element:
+        title_element = soup.find('h1', class_='aentry-post__title')
+    if not title_element:
+        title_element = soup.find('h1')
+
     post_content_element = soup.find('article', class_='b-singlepost-body')
+    if not post_content_element:
+        post_content_article = soup.find('article', class_='aentry-post') or soup.find('article')
+        if post_content_article:
+            post_content_element = post_content_article.find('div', class_='aentry-post__content') or post_content_article
+
     if not (date_content and post_content_element):
         print(f"Failed to extract content for {url}")
         return
-    date_match = re.search(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", date_content.get_text())
-    if not date_match:
-        print(f"Failed to extract date for {url}")
+
+    date_text = date_content.get('datetime') or date_content.get_text(strip=True)
+    try:
+        date_time = parse_date_time(date_text)
+    except ValueError:
+        print(f"Failed to extract date for {url}: {date_text}")
         return
-    date_time = date_match.group(1)
+
     post_content = convert_html_to_markdown(str(post_content_element))
     if title_element:
         title = title_element.get_text(strip=True)
     else:
         title = post_content[:15]
+
     sanitized_filename = sanitize_title(title)
     filename = f"{date_time.split(' ')[0].replace('-', '_')}_{sanitized_filename}.md"
     filepath = os.path.join(OUTPUT_DIR, filename)
@@ -137,6 +187,7 @@ def extract_and_save_content(url, session):
         f.write(f"**{date_time}**\n\n")
         f.write(post_content)
         f.write(f"\n\n[Original Post]({url})")
+
     set_file_creation_time(filepath, date_time)
     print(f"Archiving {filename}...")
 

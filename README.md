@@ -10,6 +10,7 @@ This script is a utility to download, archive, and convert LiveJournal posts int
 - Downloads each post and saves it as a markdown file.
 - Adjusts the file creation and modification dates to match the post date.
 - Automatically generates filenames based on post title and date.
+- Supports current LiveJournal post HTML structure and multiple page layout variants.
 - Outputs the progress to the console including the number of found posts and the file being archived.
 - The original link to the LiveJournal post is appended to the end of each markdown file.
 
@@ -33,7 +34,7 @@ This script is a utility to download, archive, and convert LiveJournal posts int
       ```
 
 3. **Output**:
-    - The markdown files will be saved in the `MD` directory where the `main.py` script is executed.
+    - The markdown files will be saved in the `Scraped Journals` directory where the `main.py` script is executed.
 
 ## Dependencies:
 
@@ -47,6 +48,9 @@ If you'd like to contribute, please fork the repository and make changes as you'
 ## Issues:
 If you encounter any issues or have feature requests, please file an issue on the GitHub project. 
 
+## Release Notes:
+- v1.0.1 (06-05-2026): Added compatibility for current LiveJournal HTML layouts and multiple page variants, including newer `aentry-post` markup and older `b-singlepost` markup.
+
 ## Disclaimer:
 Please use this tool responsibly. Making rapid or aggressive requests may lead to IP bans or other restrictions from LiveJournal. Always respect the terms of service of any platform you interact with.
 
@@ -55,6 +59,8 @@ This project is licensed under the MIT License.
 
 ## Note:
 - The script modifies the creation and modification dates of the markdown files to reflect the date of the original LiveJournal post. This way, the file metadata matches the original publishing date of the content.
+- This version adds compatibility for current LiveJournal HTML layouts and updated date string formats.
+- It also includes fallback handling for multiple LiveJournal page structure variants such as newer `aentry-post` markup and older `b-singlepost` markup.
 - This tool is designed for public LiveJournal blogs. It may not work correctly with private or locked posts.
 
 ## Acknowledgments:
