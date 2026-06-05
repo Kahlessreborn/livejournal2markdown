@@ -76,5 +76,23 @@ This project is licensed under the MIT License.
 - It also includes fallback handling for multiple LiveJournal page structure variants such as newer `aentry-post` markup and older `b-singlepost` markup.
 - This tool is designed for public LiveJournal blogs. It may not work correctly with private or locked posts.
 
+## Tor & Proxy Support
+- Optional Tor anonymization support has been added.
+- If Tor is missing, the script can prompt to install it and optionally remove it after the session.
+- The script now supports SOCKS5 proxies via `requests[socks]`.
+
+## Branch workflow
+For this repository, use the `experimental` branch for testing and development. When changes are approved, merge `experimental` into `main` and publish from `main`.
+
+Example commands:
+```bash
+git checkout experimental
+git push origin experimental
+# after approval
+git checkout main
+git merge experimental
+git push origin main
+```
+
 ## Acknowledgments:
 - Thank you to those who archived LiveJournal, I thought mine was long gone after nearly two decades I wanted a way to back it up that was still readable.
