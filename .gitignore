@@ -1,0 +1,4 @@
+Scraped Journals/*
+!Scraped Journals/.gitkeep
+__pycache__/
+*.pyc
