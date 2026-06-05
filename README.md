@@ -1,3 +1,13 @@
+# livejournal2markdown-revived
+
+A cross-platform Python script to download LiveJournal blogs and seamlessly convert them into Markdown files.
+
+> [!NOTE]
+> This project is a revived continuation of the original work by **[Jamisonfitz](https://github.com)**. 
+> The original project is unmaintained and relied on Windows-specific dependencies (`pywin32`) that caused crashes on modern platforms. This repository fixes those compatibility errors, updates modern dependencies, and ensures smooth execution across Windows, macOS, and Linux.
+
+---
+
 # LiveJournal 2 Markdown Archive Tool
 <p align="center">
   <img src="https://github.com/Jamisonfitz/livejournal2markdown/blob/main/assets/logo2.png" alt="Livejournal 2 Markdown">
