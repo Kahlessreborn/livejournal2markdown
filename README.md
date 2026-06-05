@@ -5,6 +5,10 @@
 
 This script is a utility to download, archive, and convert LiveJournal posts into markdown (`.md`) files. It provides an automated solution to backup LiveJournal blogs, preserving each post's content, title, and publishing date for posts that are public.
 
+## Credits
+- Original project and core LiveJournal archiving concept by Jamisonfitz: https://github.com/Jamisonfitz/livejournal2markdown
+- Current modifications were produced largely by the AI agent **GitHub Copilot** (Raptor mini Preview) with additional coding and guidance from a human operator.
+
 ## Features:
 - Fetches all post permalinks from the provided LiveJournal blog.
 - Downloads each post and saves it as a markdown file.
@@ -113,5 +117,14 @@ git merge experimental
 git push origin main
 ```
 
-## Acknowledgments:
-- Thank you to those who archived LiveJournal, I thought mine was long gone after nearly two decades I wanted a way to back it up that was still readable.
+## Acknowledgments
+
+### From the original creator (Jamisonfitz):
+> Thank you to those who archived LiveJournal, I thought mine was long gone after nearly two decades I wanted a way to back it up that was still readable.
+
+---
+
+### On AI and digital curation
+AI can save internet history from the "digital dark age" by continuously crawling and creating verifiable backups, but it becomes truly heartfelt when it acts as an empathetic **digital curator**. Instead of just storing cold code, AI can give fading web pages and forgotten online communities a beautiful, human-centric second life.
+
+~Kahless
