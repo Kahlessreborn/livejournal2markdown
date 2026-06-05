@@ -45,6 +45,19 @@ This script is a utility to download, archive, and convert LiveJournal posts int
 ## Contribution:
 If you'd like to contribute, please fork the repository and make changes as you'd like. Pull requests are warmly welcome.
 
+## Branch workflow:
+For this repository, use the `experimental` branch for testing and development. When changes are approved, merge `experimental` into `main` and publish from `main`.
+
+Example commands:
+```bash
+git checkout experimental
+git push origin experimental
+# after approval
+git checkout main
+git merge experimental
+git push origin main
+```
+
 ## Issues:
 If you encounter any issues or have feature requests, please file an issue on the GitHub project. 
 
